@@ -1,0 +1,3 @@
+/Users/Ian/Desktop/STM32_Projects/motor_control_pid/cmake-build-debug/CMakeFiles/motor_control_pid.elf.dir
+/Users/Ian/Desktop/STM32_Projects/motor_control_pid/cmake-build-debug/CMakeFiles/edit_cache.dir
+/Users/Ian/Desktop/STM32_Projects/motor_control_pid/cmake-build-debug/CMakeFiles/rebuild_cache.dir
