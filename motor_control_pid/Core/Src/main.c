@@ -17,8 +17,12 @@
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
+#include <stdlib.h>
+#include "string.h"
+
 #include "main.h"
 #include "can.h"
+#include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -37,8 +41,10 @@ extern PID_TypeDef drive_motor_pid[4];    // declare PID structure //array defin
 const motor_measure_t *motor_data[4]; // declare a pointer to the motor data structure
 
 int set_spd = 0;                    // target speed
-const fp32 PID[3] = { 10, 0.02, 0}; // P I D
+//const fp32 PID[3] = { 10, 0.02, 0}; // P I D
 
+
+uint32_t MsgTimer = 0; // time counter
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -64,7 +70,22 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+void USART6_IRQHandler(void)
+{
+    volatile uint8_t receive;
+    //receive interrupt
+    if(huart6.Instance->SR & UART_FLAG_RXNE)
+    {
+        receive = huart6.Instance->DR;
+        HAL_GPIO_TogglePin(LED_G_GPIO_Port, LED_G_Pin);
+    }
+        //idle interrupt
+    else if(huart6.Instance->SR & UART_FLAG_IDLE)
+    {
+        receive = huart6.Instance->DR;
+        HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_RESET);
+    }
+}
 /* USER CODE END 0 */
 
 /**
@@ -97,15 +118,27 @@ int main(void)
   MX_GPIO_Init();
   MX_CAN1_Init();
   MX_CAN2_Init();
+  MX_USART6_UART_Init();
   /* USER CODE BEGIN 2 */
 
+    HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_RESET);
+    //enable receive interrupt and idle interrupt
+    __HAL_UART_ENABLE_IT(&huart6, UART_IT_RXNE);  //receive interrupt
+    __HAL_UART_ENABLE_IT(&huart6, UART_IT_IDLE);  //idle interrupt
+
     can_filter_init();
+
+    //const fp32 PID[3] = {5,2,2 }; // P I D
+    //const fp32 PID[3] = {0.9,0.25,0.01 }; // P I D
+    const fp32 PID[3] = {10,5,1 }; // P I D
 
     // initialize pid values of all motors
     for(int i=0;i<4;i++){
         pid_init(&drive_motor_pid[i]);  //把结构体里的函数指针赋值，三个函数
         // motor_pid[i].f_param_init(&motor_pid[i],PID_Speed,16384,5000,10,0,8000,0,1.5,0.1,0);
-        drive_motor_pid[i].f_param_init(&drive_motor_pid[i],PID_Speed,16384,5000,10,0,8000,0,8,1, 2);
+//        drive_motor_pid[i].f_param_init(&drive_motor_pid[i],PID_Speed,16384,5000,10,0,8000,0,PID[0],PID[1],PID[2]);
+//        drive_motor_pid[i].f_param_init(&drive_motor_pid[i],PID_Position,300,200,10,0,800,0,PID[0],PID[1],PID[2]);
+        drive_motor_pid[i].f_param_init(&drive_motor_pid[i],PID_Position,10000,200,10,0,800,0,PID[0],PID[1],PID[2]);
         //确定结构体内的参数，幅值，死区大小，PID系数
     }
     // get motor data
@@ -122,25 +155,55 @@ int main(void)
   {
     /* USER CODE END WHILE */
 
+    /* USER CODE BEGIN 3 */
     // set all the target rotation speed (unit: rpm)
-//    drive_motor_pid[0].target = 100;    // v can be negative
-    drive_motor_pid[1].target = -100;
-    drive_motor_pid[2].target = 10000;   // v can be negative
-    drive_motor_pid[3].target = -1000;
+    drive_motor_pid[0].target = 3000;    // v can be negative
+    drive_motor_pid[1].target = 0;
+    drive_motor_pid[2].target = 0;   // v can be negative
+    drive_motor_pid[3].target = motor_data[2]->ecd;
 
     drive_motor_pid[0].f_cal_pid(&drive_motor_pid[0],motor_data[0]->speed_rpm); // calculate motor 1 pid current
-    drive_motor_pid[1].f_cal_pid(&drive_motor_pid[1],motor_data[1]->speed_rpm);
-    drive_motor_pid[2].f_cal_pid(&drive_motor_pid[2],motor_data[2]->speed_rpm);
-    drive_motor_pid[3].f_cal_pid(&drive_motor_pid[3],motor_data[3]->speed_rpm);
+    drive_motor_pid[1].f_cal_pid(&drive_motor_pid[1],motor_data[0]->speed_rpm);
+    drive_motor_pid[2].f_cal_pid(&drive_motor_pid[2],motor_data[2]->ecd);
+    drive_motor_pid[3].f_cal_pid(&drive_motor_pid[3],motor_data[3]->ecd);
 
-    CAN_cmd_chassis(drive_motor_pid[0].output,drive_motor_pid[1].output,drive_motor_pid[2].output,drive_motor_pid[3].output);
-    HAL_Delay(3);
+    CAN_cmd_chassis(drive_motor_pid[0].output,drive_motor_pid[1].output,0,drive_motor_pid[3].output);
+    HAL_Delay(2);
 
-
-//      CAN_cmd_chassis(1000, 1000, 1000, 1000);
+//      CAN_cmd_chassis(4000, 3000, 1000, 1000);
 //      HAL_Delay(10);
 
-      /* USER CODE BEGIN 3 */
+      if (HAL_GetTick() - MsgTimer > 100) {
+          char info1[10];
+          char info2[10];
+          char info3[10];
+          char info4[10];
+          int temp = (int) drive_motor_pid[3].output;
+          itoa(motor_data[1]->speed_rpm, info1, 10);
+          itoa(motor_data[2]->ecd, info2, 10);
+          itoa(motor_data[3]->ecd, info3, 10);
+          itoa(temp, info4, 10);
+//          strcat(info1, "\r\n");
+//          strcat(info2, "\r\n");
+//          strcat(info3, "\r\n");
+//          strcat(info4, "\r\n");
+
+//          HAL_UART_Transmit(&huart6, "(1)rpm:", 8, 100);
+//          HAL_UART_Transmit(&huart6, info1, 11, 100);
+          HAL_UART_Transmit(&huart6, "(2)ecd:", 7, 3);
+          HAL_UART_Transmit(&huart6, info2, 12, 3);
+          HAL_UART_Transmit(&huart6, "\r\n", 2, 3);
+
+          HAL_UART_Transmit(&huart6, "(3)ecd:", 7, 3);
+          HAL_UART_Transmit(&huart6, info3, 12, 3);
+          HAL_UART_Transmit(&huart6, "\r\n", 2, 3);
+
+          HAL_UART_Transmit(&huart6, "(3)output:", 10, 3);
+          HAL_UART_Transmit(&huart6, info4, 12, 3);
+          HAL_UART_Transmit(&huart6, "\r\n", 2, 3);
+          HAL_Delay(1);
+            MsgTimer = HAL_GetTick();
+      }
   }
   /* USER CODE END 3 */
 }
